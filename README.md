@@ -59,6 +59,78 @@ python reserve_doi.py --sandbox    # sandbox.zenodo.org (recommended for testing
 Tokens: <https://zenodo.org/account/settings/applications/tokens/new/>
 (sandbox: <https://sandbox.zenodo.org/account/settings/applications/tokens/new/>).
 
+## Full flow: reserve -> upload -> metadata -> publish
+
+The complete lifecycle over the Deposit API is four calls. `upload_and_publish.py`
+runs all of them.
+
+```bash
+export ZENODO_TOKEN=...   # needs BOTH 'deposit:write' and 'deposit:actions' scopes
+
+# Leaves an unpublished draft you can review in the web UI:
+python upload_and_publish.py ./data.csv --sandbox \
+  --title "My dataset" --creator "Doe, Jane" --affiliation "Rotterdam UAS" \
+  --description "Example upload." --upload-type dataset
+
+# Same, but actually publishes (PERMANENT — registers the DOI, freezes files):
+python upload_and_publish.py ./data.csv --sandbox --publish
+```
+
+### 1. Create the draft (DOI reserved automatically)
+
+```bash
+curl -X POST "https://zenodo.org/api/deposit/depositions" \
+  -H "Authorization: Bearer $ZENODO_TOKEN" -H "Content-Type: application/json" -d '{}'
+```
+
+Keep two things from the response: `id` and `links.bucket` (the upload URL).
+
+### 2. Upload the file (bucket API — recommended, handles large files)
+
+`PUT` the raw file bytes to `{bucket_url}/{filename}`:
+
+```bash
+curl -X PUT "$BUCKET_URL/data.csv" \
+  -H "Authorization: Bearer $ZENODO_TOKEN" \
+  --upload-file ./data.csv
+```
+
+(The older `POST /api/deposit/depositions/{id}/files` multipart form still works
+but is deprecated.)
+
+### 3. Set the minimum required metadata
+
+To be publishable you need at least `title`, `upload_type`, `description`, and
+`creators`:
+
+```bash
+curl -X PUT "https://zenodo.org/api/deposit/depositions/$ID" \
+  -H "Authorization: Bearer $ZENODO_TOKEN" -H "Content-Type: application/json" \
+  -d '{
+        "metadata": {
+          "title": "My dataset",
+          "upload_type": "dataset",
+          "description": "Example upload.",
+          "creators": [{"name": "Doe, Jane", "affiliation": "Rotterdam UAS"}]
+        }
+      }'
+```
+
+Some `upload_type`s need an extra field: `publication` requires
+`publication_type`, `image` requires `image_type`.
+
+### 4. Publish (permanent)
+
+```bash
+curl -X POST "https://zenodo.org/api/deposit/depositions/$ID/actions/publish" \
+  -H "Authorization: Bearer $ZENODO_TOKEN"
+```
+
+Publishing **registers the reserved DOI with DataCite and freezes the files** —
+after this you can only create a new *version*, not edit the files. Always dry-run
+on `sandbox.zenodo.org` first. The `actions/publish` call requires the
+`deposit:actions` token scope.
+
 ## Newer InvenioRDM PIDs endpoint
 
 Zenodo now runs on InvenioRDM. The legacy Deposit API above still works and is
