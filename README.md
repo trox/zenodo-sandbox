@@ -240,6 +240,37 @@ Caveat: on pages that carry a `/Rotate` flag (90/180/270) the stamp rotates with
 the page — counter it with `rotation=`, or normalize first via
 `page.transfer_rotation_to_content()`.
 
+#### Spec measured from the Gonzalez et al. example
+
+Reverse-engineered with `pdfminer.six` from the real footer (`footer_doi_stamp()`):
+
+| Property | Measured value |
+|---|---|
+| Text | `DOI: 10.5281/zenodo.13221337` (no URL) |
+| Font | **Calibri Regular** (subset `AAAAAC+Calibri`), not bold/italic |
+| Size | 11 pt (effective 11.04) |
+| Color | Black `(0, 0, 0)` |
+| Page | A4, 595.28 × 841.89 pt; first page only |
+| Anchor | Bottom-left |
+| Baseline | x = 71.05, y = 49.16 pt |
+| Text bbox | x0=71.05, y0=46.19, x1=212.43, y1=57.23 (w=141.38, h=11.04) |
+| Left margin | 71.05 pt (≈ 2.5 cm) |
+| Bottom (visual) | 46.19 pt (≈ 1.63 cm) from the page edge |
+
+```python
+from embed_doi import embed_doi, footer_doi_stamp
+# Exact position + size + colour; Helvetica substitute (~10% wider text):
+embed_doi("in.pdf", "out.pdf", doi, stamp_spec=footer_doi_stamp(doi))
+# Pixel-exact glyphs — supply Calibri (or metric-compatible Carlito-Regular.ttf):
+embed_doi("in.pdf", "out.pdf", doi,
+          stamp_spec=footer_doi_stamp(doi, calibri_ttf="/path/to/Carlito-Regular.ttf"))
+```
+
+Verified: `footer_doi_stamp` reproduces the left edge and baseline to **0.00 pt**
+and the cap height to 0.04 pt. Calibri is not a base-14 font, so without a
+Calibri/Carlito TTF the glyph *widths* differ (~15 pt longer) — position is
+unaffected.
+
 ### Manual publish (final check)
 
 Review each draft via its `record_url`, then publish — one, or all:

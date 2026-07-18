@@ -54,6 +54,42 @@ def default_doi_stamp(doi: str, **overrides) -> StampSpec:
     return spec
 
 
+def footer_doi_stamp(doi: str, *, calibri_ttf: "str | None" = None, **overrides) -> StampSpec:
+    """Preset reverse-engineered from the Gonzalez et al. example PDF.
+
+    Measured spec (first-page footer, A4 595.28 x 841.89 pt):
+      text     "DOI: <doi>"          (no URL)
+      font     Calibri Regular, 11 pt, black (0,0,0)
+      anchor   bottom-left
+      baseline x = 71.05, y = 49.16 pt  (visual bottom y0 = 46.19)
+      margins  left = 71.05 pt (~2.5 cm), bottom-of-text = 46.19 pt (~1.63 cm)
+
+    Calibri is not a base-14 font. Pass ``calibri_ttf`` (a path to Calibri.ttf or
+    the metric-compatible Carlito-Regular.ttf) to match glyph widths exactly;
+    otherwise it falls back to Helvetica — position is identical, the text is
+    ~10% wider.
+    """
+    font = "Helvetica"
+    if calibri_ttf:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        pdfmetrics.registerFont(TTFont("Calibri", calibri_ttf))
+        font = "Calibri"
+    spec = StampSpec(
+        text=f"DOI: {doi}",
+        anchor="bottom-left",
+        margin_x=71.05,
+        margin_y=46.19,   # 'bottom' anchor pins the text's visual bottom here
+        font=font,
+        size=11.0,
+        color=(0.0, 0.0, 0.0),
+        pages="first",
+    )
+    for k, v in overrides.items():
+        setattr(spec, k, v)
+    return spec
+
+
 # --- Public API ------------------------------------------------------------
 def embed_doi(src_path: str, dst_path: str, doi: str, *,
               stamp: bool = False, stamp_spec: "StampSpec | None" = None) -> None:
