@@ -1,0 +1,12 @@
+# Never commit tokens or run state
+.env
+manifest.csv
+manifest.csv.tmp
+
+# Generated / user data
+pdfs_with_doi/
+*.pyc
+__pycache__/
+
+# Throwaway test PDFs (regenerate as needed)
+pdfs/

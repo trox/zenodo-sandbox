@@ -131,6 +131,94 @@ after this you can only create a new *version*, not edit the files. Always dry-r
 on `sandbox.zenodo.org` first. The `actions/publish` call requires the
 `deposit:actions` token scope.
 
+## Batch workflow: many PDFs, DOI embedded before publish
+
+Scenario: a folder of PDFs (unique filenames), extensive metadata in CSV
+(multiple authors), each PDF needs its own DOI **embedded into the PDF before
+upload**, and publishing stays a manual final check.
+
+Because a DOI belongs to a record, **one PDF = one record = one DOI**. The DOI
+must exist before the file is finalized, which is exactly what reserving solves:
+
+```
+reserve DOI  ->  embed into the PDF  ->  upload  ->  set metadata  ->  STOP (draft)
+                                                                        |
+                                                       manual review + publish
+```
+
+### Files
+
+| Script | Role |
+|--------|------|
+| `zenodo_api.py` | Small Deposit API client (ret/backoff on 429/5xx). |
+| `embed_doi.py` | Writes the DOI into a PDF: `/doi` + `/Subject` metadata, and an optional visible stamp on page 1 (`--stamp`, needs reportlab). |
+| `batch_reserve.py` | Driver: reserve → embed → upload → describe, per file, resumable via `manifest.csv`. **Never publishes.** |
+| `publish_from_manifest.py` | Separate, gated final step: publishes `draft_ready` rows. |
+
+### Two-table CSV (handles multiple authors)
+
+`files.csv` — one row per PDF, keyed by `filename`:
+
+```
+filename,title,description,upload_type,keywords,license,version,publication_date
+paper1.pdf,"Effects of X on Y","A study.",publication,"biology;experiment",cc-by-4.0,1.0,2026-07-18
+```
+
+`authors.csv` — long format, one row per (file, author), joined on `filename`,
+ordered by `order`:
+
+```
+filename,order,name,affiliation,orcid
+paper1.pdf,1,"Doe, Jane","Rotterdam UAS",0000-0001-2345-6789
+paper1.pdf,2,"Smith, John","MIT",
+```
+
+`name` must be **"Family, Given"**; empty `affiliation`/`orcid` cells are
+omitted (not sent as `""`). `keywords` is `;`-separated. Non-author contributors
+(editors, supervisors) belong in a `contributors` list instead — add a column
+and extend `build_metadata` if you need them.
+
+### Run it
+
+```bash
+pip install -r requirements.txt          # pypdf (+ reportlab for --stamp)
+export ZENODO_TOKEN=...                   # scope 'deposit:write'
+
+python batch_reserve.py --sandbox \
+  --files files.csv --authors authors.csv \
+  --pdf-dir ./pdfs --out-dir ./pdfs_with_doi --stamp
+```
+
+This validates that every PDF has exactly one metadata row (and vice versa),
+then for each file: reserves a DOI, writes a DOI-embedded copy into
+`./pdfs_with_doi/`, uploads it, sets metadata, and records progress in
+`manifest.csv`. **Originals are never modified.** Re-running resumes each file
+from its last recorded status, so an interrupted or partially-failed run is safe
+to repeat — it will not mint duplicate DOIs.
+
+`manifest.csv` is your control sheet:
+
+```
+filename,status,deposition_id,reserved_doi,bucket_url,record_url,error
+```
+
+Statuses advance `reserved → embedded → uploaded → described → draft_ready`.
+
+### Manual publish (final check)
+
+Review each draft via its `record_url`, then publish — one, or all:
+
+```bash
+export ZENODO_TOKEN=...   # scopes 'deposit:write' AND 'deposit:actions'
+python publish_from_manifest.py --sandbox --list            # dry run
+python publish_from_manifest.py --sandbox --only paper1.pdf --yes
+python publish_from_manifest.py --sandbox --yes             # all draft_ready
+```
+
+Publishing is permanent (DOI registered, files frozen). Rehearse the whole
+thing on `sandbox.zenodo.org` first — the reserved DOI you embedded is the exact
+DOI that gets registered.
+
 ## Newer InvenioRDM PIDs endpoint
 
 Zenodo now runs on InvenioRDM. The legacy Deposit API above still works and is

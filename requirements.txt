@@ -1,0 +1,2 @@
+pypdf>=4
+reportlab>=4   # optional: only needed for --stamp (visible DOI on page 1)
