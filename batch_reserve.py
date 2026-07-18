@@ -37,7 +37,7 @@ import os
 import sys
 from collections import defaultdict
 
-from embed_doi import embed_doi
+from embed_doi import embed_doi, footer_doi_stamp, default_doi_stamp
 from zenodo_api import PROD, SANDBOX, Zenodo, ZenodoError, reserved_doi_of
 
 MANIFEST_FIELDS = [
@@ -142,7 +142,13 @@ def main() -> None:
     ap.add_argument("--out-dir", default="./pdfs_with_doi")
     ap.add_argument("--manifest", default="manifest.csv")
     ap.add_argument("--sandbox", action="store_true")
-    ap.add_argument("--stamp", action="store_true", help="Also print the DOI on page 1 (needs reportlab).")
+    ap.add_argument("--stamp", action="store_true", help="Print the DOI on page 1 (needs reportlab).")
+    ap.add_argument("--stamp-style", choices=["footer", "default"], default="footer",
+                    help="'footer' = Gonzalez-style Calibri 11pt bottom-left (default); "
+                         "'default' = 'DOI: ... https://doi.org/...' bottom-left.")
+    ap.add_argument("--font-file", default="",
+                    help="Path to Calibri.ttf (or Carlito-Regular.ttf) for exact glyphs. "
+                         "Also read from $ZENODO_CALIBRI_TTF or ./fonts/.")
     args = ap.parse_args()
 
     token = os.environ.get("ZENODO_TOKEN")
@@ -186,8 +192,15 @@ def main() -> None:
 
             # 2. embed the reserved DOI into a copy of the PDF
             if status_lt(row["status"], "embedded"):
+                spec = None
+                if args.stamp:
+                    doi = row["reserved_doi"]
+                    if args.stamp_style == "footer":
+                        spec = footer_doi_stamp(doi, calibri_ttf=args.font_file or None)
+                    else:
+                        spec = default_doi_stamp(doi)
                 embed_doi(os.path.join(args.pdf_dir, filename), out_pdf,
-                          row["reserved_doi"], stamp=args.stamp)
+                          row["reserved_doi"], stamp_spec=spec)
                 row["status"] = "embedded"
                 write_manifest(args.manifest, manifest)
                 print(f"[embed   ] {filename}")

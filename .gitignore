@@ -10,3 +10,7 @@ __pycache__/
 
 # Throwaway test PDFs (regenerate as needed)
 pdfs/
+
+# Font binaries (Calibri is proprietary — keep local)
+fonts/*.ttf
+fonts/*.otf

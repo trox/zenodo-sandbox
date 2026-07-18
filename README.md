@@ -271,6 +271,24 @@ and the cap height to 0.04 pt. Calibri is not a base-14 font, so without a
 Calibri/Carlito TTF the glyph *widths* differ (~15 pt longer) — position is
 unaffected.
 
+**Supplying Calibri.** `footer_doi_stamp` finds the font in this order: the
+`calibri_ttf=` arg (`--font-file`), `$ZENODO_CALIBRI_TTF`, `fonts/Calibri.ttf`,
+then the system Carlito. Drop your licensed `Calibri.ttf` into `fonts/` — it is
+git-ignored (Calibri is proprietary; see `fonts/README.md`). Carlito is a free,
+metric-compatible drop-in.
+
+In the batch, `--stamp` defaults to this footer style:
+
+```bash
+# with fonts/Calibri.ttf present, glyphs match the example exactly:
+python batch_reserve.py --sandbox --stamp \
+    --files files.csv --authors authors.csv --pdf-dir ./pdfs --out-dir ./pdfs_with_doi
+# or point at the font explicitly:
+python batch_reserve.py --sandbox --stamp --font-file /path/to/Calibri.ttf ...
+# switch to the URL-style stamp instead:
+python batch_reserve.py --sandbox --stamp --stamp-style default ...
+```
+
 ### Manual publish (final check)
 
 Review each draft via its `record_url`, then publish — one, or all:

@@ -16,7 +16,42 @@ Requires: pypdf  (pip install pypdf).  Optional: reportlab (for the stamp).
 from __future__ import annotations
 
 import io
+import os
 from dataclasses import dataclass
+
+# Track TTFs already registered with reportlab so a batch doesn't re-register
+# the same file hundreds of times.
+_REGISTERED: "dict[str, str]" = {}
+
+# Where footer_doi_stamp looks for a Calibri (or metric-compatible Carlito) TTF,
+# in order. Calibri is proprietary — keep it local, never commit it.
+_FONT_SEARCH = [
+    os.environ.get("ZENODO_CALIBRI_TTF", ""),
+    "fonts/Calibri.ttf",
+    "fonts/calibri.ttf",
+    "fonts/Carlito-Regular.ttf",
+    "/usr/share/fonts/truetype/crosextra/Carlito-Regular.ttf",  # LibreOffice's Calibri clone
+]
+
+
+def find_calibri(explicit: "str | None" = None) -> "str | None":
+    """Return a path to a Calibri/Carlito TTF, or None. Checks, in order:
+    the explicit arg, $ZENODO_CALIBRI_TTF, ./fonts/, then the system Carlito."""
+    for cand in [explicit, *_FONT_SEARCH]:
+        if cand and os.path.isfile(cand):
+            return cand
+    return None
+
+
+def _register(ttf_path: str, name: str = "Calibri") -> str:
+    """Register `ttf_path` with reportlab under `name` (idempotent); return the name."""
+    if _REGISTERED.get(name) == ttf_path:
+        return name
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    pdfmetrics.registerFont(TTFont(name, ttf_path))
+    _REGISTERED[name] = ttf_path
+    return name
 
 # --- Stamp geometry --------------------------------------------------------
 # PDF coordinate space: origin bottom-left, Y up, units = points (1/72 inch).
@@ -64,17 +99,14 @@ def footer_doi_stamp(doi: str, *, calibri_ttf: "str | None" = None, **overrides)
       baseline x = 71.05, y = 49.16 pt  (visual bottom y0 = 46.19)
       margins  left = 71.05 pt (~2.5 cm), bottom-of-text = 46.19 pt (~1.63 cm)
 
-    Calibri is not a base-14 font. Pass ``calibri_ttf`` (a path to Calibri.ttf or
-    the metric-compatible Carlito-Regular.ttf) to match glyph widths exactly;
-    otherwise it falls back to Helvetica — position is identical, the text is
-    ~10% wider.
+    Calibri is not a base-14 font. Provide a Calibri.ttf (or the
+    metric-compatible Carlito-Regular.ttf) to match glyph widths exactly, via
+    the ``calibri_ttf`` arg, ``$ZENODO_CALIBRI_TTF``, or ./fonts/. If none is
+    found it falls back to Helvetica — position is identical, the text is ~10%
+    wider.
     """
-    font = "Helvetica"
-    if calibri_ttf:
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
-        pdfmetrics.registerFont(TTFont("Calibri", calibri_ttf))
-        font = "Calibri"
+    ttf = find_calibri(calibri_ttf)
+    font = _register(ttf, "Calibri") if ttf else "Helvetica"
     spec = StampSpec(
         text=f"DOI: {doi}",
         anchor="bottom-left",
