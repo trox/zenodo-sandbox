@@ -149,6 +149,8 @@ def main() -> None:
     ap.add_argument("--font-file", default="",
                     help="Path to Calibri.ttf (or Carlito-Regular.ttf) for exact glyphs. "
                          "Also read from $ZENODO_CALIBRI_TTF or ./fonts/.")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="Process only the first N files (0 = all). Use for a sandbox trial.")
     args = ap.parse_args()
 
     token = os.environ.get("ZENODO_TOKEN")
@@ -172,7 +174,23 @@ def main() -> None:
     z = Zenodo(token, base)
     manifest = load_manifest(args.manifest)
 
-    for filename, frow in files.items():
+    # Announce target + resolved stamp font so silent fallbacks are visible.
+    print(f"Target: {base}  ({'SANDBOX' if args.sandbox else 'PRODUCTION'})")
+    if args.stamp and args.stamp_style == "footer":
+        from embed_doi import find_calibri
+        ttf = find_calibri(args.font_file or None)
+        if ttf:
+            print(f"Stamp font: Calibri <- {ttf}")
+        else:
+            print("Stamp font: Helvetica (no Calibri/Carlito found — position matches, "
+                  "glyphs ~1% wider). Drop Calibri.ttf in fonts/ for an exact match.")
+
+    selected = list(files.items())
+    if args.limit > 0:
+        selected = selected[:args.limit]
+        print(f"--limit {args.limit}: processing {len(selected)} of {len(files)} files.")
+
+    for filename, frow in selected:
         row = manifest.get(filename, {"filename": filename, "status": ""})
         manifest[filename] = row
         row["error"] = ""
