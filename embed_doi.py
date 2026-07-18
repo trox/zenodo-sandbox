@@ -5,20 +5,58 @@ Two layers, both applied:
 1. Document metadata: writes the DOI into the PDF Info dictionary (a ``/doi``
    key plus the standard ``/Subject``) so it travels with the file and is
    machine-readable.
-2. Optional visible stamp: prints "DOI: 10.5281/zenodo.NNNN  https://doi.org/..."
-   at the bottom of the first page. Requires reportlab; if it's not installed
-   the function still succeeds with metadata-only embedding.
+2. Optional visible stamp: a configurable text overlay (see ``StampSpec``).
+   Requires reportlab; if it's not installed the function still succeeds with
+   metadata-only embedding.
 
 Originals are never modified — always writes to a new destination path.
 
-Requires: pypdf  (pip install pypdf).  Optional: reportlab (for --stamp).
+Requires: pypdf  (pip install pypdf).  Optional: reportlab (for the stamp).
 """
 from __future__ import annotations
 
 import io
+from dataclasses import dataclass
+
+# --- Stamp geometry --------------------------------------------------------
+# PDF coordinate space: origin bottom-left, Y up, units = points (1/72 inch).
+# drawString() places the text BASELINE; glyphs rise `ascent` above it and drop
+# `descent` (negative) below. All anchoring is arithmetic on width + asc/desc.
+
+_H = {"left", "center", "right"}
+_V = {"top", "middle", "bottom"}
 
 
-def embed_doi(src_path: str, dst_path: str, doi: str, *, stamp: bool = False) -> None:
+@dataclass
+class StampSpec:
+    """Fully specifies a text stamp. All lengths in PDF points (72 = 1 inch)."""
+    text: str
+    anchor: str = "bottom-left"   # "<v>-<h>", v in top/middle/bottom, h in left/center/right
+    margin_x: float = 36.0        # distance from the anchored horizontal edge
+    margin_y: float = 24.0        # distance from the anchored vertical edge
+    font: str = "Helvetica"       # any built-in base-14 font, or a registered TTF name
+    size: float = 8.0
+    color: tuple = (0.0, 0.0, 0.0)   # RGB, each 0..1
+    opacity: float = 1.0             # 0..1 fill alpha (needs a modern PDF viewer)
+    rotation: float = 0.0            # degrees CCW, about the anchor point
+    box: bool = False                # draw a filled rectangle behind the text
+    box_color: tuple = (1.0, 1.0, 1.0)
+    box_opacity: float = 1.0
+    box_padding: float = 3.0
+    pages: str = "first"             # "first" | "last" | "all" | comma list e.g. "1,3,5" (1-based)
+
+
+def default_doi_stamp(doi: str, **overrides) -> StampSpec:
+    """The project default: 'DOI: <doi>   https://doi.org/<doi>', bottom-left."""
+    spec = StampSpec(text=f"DOI: {doi}   https://doi.org/{doi}")
+    for k, v in overrides.items():
+        setattr(spec, k, v)
+    return spec
+
+
+# --- Public API ------------------------------------------------------------
+def embed_doi(src_path: str, dst_path: str, doi: str, *,
+              stamp: bool = False, stamp_spec: "StampSpec | None" = None) -> None:
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(src_path)
@@ -31,54 +69,140 @@ def embed_doi(src_path: str, dst_path: str, doi: str, *, stamp: bool = False) ->
         meta.update({k: v for k, v in reader.metadata.items() if v is not None})
     meta["/doi"] = doi
     existing_subject = meta.get("/Subject", "")
-    doi_url = f"https://doi.org/{doi}"
     if doi not in str(existing_subject):
         meta["/Subject"] = (f"{existing_subject}  " if existing_subject else "") + f"DOI: {doi}"
     writer.add_metadata(meta)
 
-    # 2. Optional visible stamp on page 1.
-    if stamp:
-        _stamp_first_page(writer, f"DOI: {doi}   {doi_url}")
+    # 2. Optional visible stamp.
+    if stamp or stamp_spec is not None:
+        spec = stamp_spec or default_doi_stamp(doi)
+        _apply_stamp(writer, spec)
 
     with open(dst_path, "wb") as fh:
         writer.write(fh)
 
 
-def _stamp_first_page(writer, text: str) -> None:
-    """Overlay `text` near the bottom-left of the first page. No-op if reportlab absent."""
+# --- Rendering -------------------------------------------------------------
+def _resolve_pages(spec_pages: str, n: int) -> "list[int]":
+    s = spec_pages.strip().lower()
+    if s == "first":
+        return [0]
+    if s == "last":
+        return [n - 1]
+    if s == "all":
+        return list(range(n))
+    out = []
+    for tok in s.split(","):
+        tok = tok.strip()
+        if tok:
+            i = int(tok) - 1  # 1-based -> 0-based
+            if 0 <= i < n:
+                out.append(i)
+    return out
+
+
+def _anchor_baseline(anchor: str, W: float, H: float, tw: float,
+                     asc: float, desc: float, spec: StampSpec) -> "tuple[float, float]":
+    """Return the (x, y) BASELINE for the text in the page coordinate system."""
+    try:
+        v, h = anchor.split("-", 1)
+    except ValueError:
+        v, h = "bottom", "left"
+    if h not in _H or v not in _V:
+        v, h = "bottom", "left"
+
+    if h == "left":
+        x = spec.margin_x
+    elif h == "right":
+        x = W - spec.margin_x - tw
+    else:  # center
+        x = (W - tw) / 2.0
+
+    if v == "bottom":
+        y = spec.margin_y - desc            # desc<0 => visual bottom sits margin_y above edge
+    elif v == "top":
+        y = H - spec.margin_y - asc
+    else:  # middle
+        y = (H - asc - desc) / 2.0
+    return x, y
+
+
+def _apply_stamp(writer, spec: StampSpec) -> None:
+    """Composite `spec` onto the selected pages. No-op if reportlab is absent."""
     try:
         from reportlab.pdfgen import canvas
-        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfbase import pdfmetrics
     except ImportError:
-        # reportlab not installed: silently keep metadata-only embedding.
-        return
+        return  # keep metadata-only embedding
     from pypdf import PdfReader
 
-    if not writer.pages:
-        return
-    page = writer.pages[0]
-    width = float(page.mediabox.width)
-    height = float(page.mediabox.height)
+    pages = _resolve_pages(spec.pages, len(writer.pages))
+    asc_desc = pdfmetrics.getAscentDescent(spec.font, spec.size)  # (ascent, descent<0)
+    asc, desc = float(asc_desc[0]), float(asc_desc[1])
+    tw = pdfmetrics.stringWidth(spec.text, spec.font, spec.size)
 
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(width, height))
-    c.setFont("Helvetica", 8)
-    c.drawString(36, 24, text)  # 0.5" from the left, 0.33" from the bottom
-    c.save()
-    buf.seek(0)
+    for idx in pages:
+        page = writer.pages[idx]
+        # Use the CROPBOX (the visible area) for extents and offset; fall back to mediabox.
+        box = page.cropbox if page.cropbox is not None else page.mediabox
+        x0, y0 = float(box.left), float(box.bottom)
+        W, H = float(box.width), float(box.height)
 
-    overlay = PdfReader(buf).pages[0]
-    page.merge_page(overlay)
+        buf = io.BytesIO()
+        # Overlay canvas spans the full mediabox so merge_page aligns 1:1.
+        mb = page.mediabox
+        c = canvas.Canvas(buf, pagesize=(float(mb.width), float(mb.height)))
+
+        bx, by = _anchor_baseline(spec.anchor, W, H, tw, asc, desc, spec)
+        # Shift into mediabox space by the cropbox origin.
+        bx += x0
+        by += y0
+
+        c.saveState()
+        c.translate(bx, by)
+        if spec.rotation:
+            c.rotate(spec.rotation)
+        if spec.box:
+            p = spec.box_padding
+            c.setFillColorRGB(*spec.box_color)
+            if spec.box_opacity < 1.0:
+                c.setFillAlpha(spec.box_opacity)
+            c.rect(-p, desc - p, tw + 2 * p, (asc - desc) + 2 * p, stroke=0, fill=1)
+        c.setFillColorRGB(*spec.color)
+        if spec.opacity < 1.0:
+            c.setFillAlpha(spec.opacity)
+        c.setFont(spec.font, spec.size)
+        c.drawString(0, 0, spec.text)  # baseline at the translated origin
+        c.restoreState()
+        c.save()
+        buf.seek(0)
+
+        overlay = PdfReader(buf).pages[0]
+        # NOTE: if the page carries /Rotate (90/180/270) the stamp rotates with
+        # the page. For those, add spec.rotation to counter it, or normalize the
+        # page with writer.pages[idx].transfer_rotation_to_content() first.
+        page.merge_page(overlay)
 
 
 if __name__ == "__main__":
     import argparse
 
-    ap = argparse.ArgumentParser(description="Embed a DOI into a PDF.")
+    ap = argparse.ArgumentParser(description="Embed a DOI into a PDF (metadata + optional stamp).")
     ap.add_argument("src")
     ap.add_argument("dst")
     ap.add_argument("doi")
-    ap.add_argument("--stamp", action="store_true", help="Also print the DOI on page 1 (needs reportlab).")
+    ap.add_argument("--stamp", action="store_true", help="Draw the default DOI stamp (needs reportlab).")
+    ap.add_argument("--anchor", default="bottom-left")
+    ap.add_argument("--size", type=float, default=8.0)
+    ap.add_argument("--pages", default="first", help="first | last | all | '1,3,5'")
+    ap.add_argument("--box", action="store_true", help="White box behind the text.")
+    ap.add_argument("--rotation", type=float, default=0.0)
     a = ap.parse_args()
-    embed_doi(a.src, a.dst, a.doi, stamp=a.stamp)
+
+    spec = None
+    if a.stamp or a.box or a.anchor != "bottom-left" or a.pages != "first" \
+            or a.size != 8.0 or a.rotation:
+        spec = default_doi_stamp(a.doi, anchor=a.anchor, size=a.size, pages=a.pages,
+                                 box=a.box, rotation=a.rotation)
+    embed_doi(a.src, a.dst, a.doi, stamp=a.stamp, stamp_spec=spec)
     print(f"Embedded {a.doi} -> {a.dst}")

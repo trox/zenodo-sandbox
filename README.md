@@ -204,6 +204,42 @@ filename,status,deposition_id,reserved_doi,bucket_url,record_url,error
 
 Statuses advance `reserved → embedded → uploaded → described → draft_ready`.
 
+### The DOI stamp
+
+The visible stamp is configurable via `StampSpec` in `embed_doi.py`. Coordinate
+model: PDF points (72 = 1 inch), origin bottom-left, Y up; `drawString` sets the
+text **baseline**, so anchoring is arithmetic on `stringWidth` + font
+ascent/descent (`pdfmetrics.getAscentDescent`). Extents come from the page
+**cropbox** (visible area), and the overlay is rendered with reportlab and
+composited via `pypdf.merge_page`.
+
+Default: `DOI: <doi>   https://doi.org/<doi>`, Helvetica 8 pt, black, bottom-left
+at 36 pt / 24 pt margins, first page only.
+
+```python
+from embed_doi import embed_doi, default_doi_stamp
+
+spec = default_doi_stamp(
+    "10.5281/zenodo.123",
+    anchor="bottom-right",   # {top,middle,bottom}-{left,center,right}
+    size=9, box=True, box_color=(1, 1, 1), box_opacity=0.7,
+    pages="all",             # first | last | all | "1,3,5"
+)
+embed_doi("in.pdf", "out.pdf", "10.5281/zenodo.123", stamp_spec=spec)
+```
+
+`StampSpec` fields: `text, anchor, margin_x, margin_y, font, size, color,
+opacity, rotation, box, box_color, box_opacity, box_padding, pages`. CLI:
+
+```bash
+python embed_doi.py in.pdf out.pdf 10.5281/zenodo.123 \
+    --anchor top-right --size 9 --box --pages all
+```
+
+Caveat: on pages that carry a `/Rotate` flag (90/180/270) the stamp rotates with
+the page — counter it with `rotation=`, or normalize first via
+`page.transfer_rotation_to_content()`.
+
 ### Manual publish (final check)
 
 Review each draft via its `record_url`, then publish — one, or all:
