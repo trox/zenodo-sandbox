@@ -36,9 +36,11 @@ def _request(method: str, url: str, token: str, *, data=None, json_body=None):
     if json_body is not None:
         body = json.dumps(json_body).encode("utf-8")
         headers["Content-Type"] = "application/json"
+    if not url.lower().startswith("https://"):
+        sys.exit(f"Refusing to open non-HTTPS URL: {url}")
     req = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req) as resp:  # nosec B310 - scheme checked above
             raw = resp.read()
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:

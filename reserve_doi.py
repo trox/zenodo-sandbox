@@ -38,6 +38,8 @@ import urllib.request
 def reserve_doi(token: str, base_url: str) -> dict:
     """Create an empty draft deposition; Zenodo pre-reserves a DOI for it."""
     url = f"{base_url}/api/deposit/depositions"
+    if not url.lower().startswith("https://"):
+        sys.exit(f"Refusing to open non-HTTPS URL: {url}")
     req = urllib.request.Request(
         url,
         data=b"{}",  # empty deposition -> DOI is auto pre-reserved
@@ -48,7 +50,7 @@ def reserve_doi(token: str, base_url: str) -> dict:
         },
     )
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req) as resp:  # nosec B310 - scheme checked above
             return json.load(resp)
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")

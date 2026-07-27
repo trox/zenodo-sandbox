@@ -34,12 +34,17 @@ class Zenodo:
             body = json.dumps(json_body).encode("utf-8")
             headers["Content-Type"] = "application/json"
 
+        # Refuse any non-HTTPS scheme (guards against file:// / custom schemes;
+        # see REVIEW.md, addresses bandit B310).
+        if not url.lower().startswith("https://"):
+            raise ValueError(f"refusing to open non-HTTPS URL: {url!r}")
+
         attempt = 0
         while True:
             attempt += 1
             req = urllib.request.Request(url, data=body, method=method, headers=headers)
             try:
-                with urllib.request.urlopen(req) as resp:
+                with urllib.request.urlopen(req) as resp:  # nosec B310 - scheme checked above
                     raw = resp.read()
                     return json.loads(raw) if raw else {}
             except urllib.error.HTTPError as exc:
