@@ -1,6 +1,26 @@
-# zenodo-sandbox
+# zenodo-doi-batch
 
-Reserving a DOI via the [Zenodo API](https://zenodo.org/api).
+Reserve DOIs via the [Zenodo API](https://zenodo.org/api), embed each DOI into
+its PDF *before* upload, and prepare Zenodo drafts in bulk — keeping the final
+publish a deliberate, manual step.
+
+**Use case.** A folder of PDFs, each needing its own DOI printed in the footer
+before it goes public. One PDF = one Zenodo record = one DOI. The batch reserves
+the DOI, stamps + embeds it, uploads, and sets metadata from CSV, then stops at
+a reviewable draft.
+
+## Contents
+
+| Path | What it is |
+|------|------------|
+| `RUNBOOK.md` | **Start here to run it** — setup → sandbox trial → debugging → production, on macOS. |
+| `batch_reserve.py` | Batch driver: reserve → embed → upload → describe, resumable via a manifest. |
+| `publish_from_manifest.py` | Separate, gated final publish step. |
+| `embed_doi.py` | PDF DOI embedding (metadata + configurable visible stamp / `StampSpec`). |
+| `zenodo_api.py` | Minimal Zenodo Deposit API client (retry/backoff). |
+| `reserve_doi.py`, `upload_and_publish.py` | Standalone single-record examples. |
+| `files.csv`, `authors.csv` | Sample two-table metadata input. |
+| `fonts/` | Drop `Calibri.ttf` here (git-ignored); see `fonts/README.md`. |
 
 ## The point of confusion
 
